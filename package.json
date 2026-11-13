@@ -1,0 +1,8 @@
+{
+  "name": "harapeko-yokocho-kitchen",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

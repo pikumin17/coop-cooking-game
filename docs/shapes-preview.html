@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>図形描画プレビュー</title>
+  <style>
+    body {
+      margin: 16px;
+      font-family: sans-serif;
+      background: #faf6ee;
+      color: #3b2f2f;
+    }
+    canvas {
+      display: block;
+      background: #ffffff;
+      border: 1px solid #d9d0c1;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="preview" width="1080" height="620"></canvas>
+  <script type="module">
+    import {
+      drawTile,
+      drawIngredient,
+      drawPlayer,
+    } from "../src/render/shapes.js";
+
+    const canvas = document.getElementById("preview");
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const drawSectionTitle = (text, x, y) => {
+      ctx.fillStyle = "#3b2f2f";
+      ctx.font = "bold 16px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(text, x, y);
+    };
+
+    const drawLabel = (text, cx, y) => {
+      ctx.fillStyle = "#3b2f2f";
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(text, cx, y);
+    };
+
+    // 1. 全食材 × 状態
+    drawSectionTitle("1. 食材 × 状態", 24, 32);
+
+    const ingredients = [
+      { k: "leaf", s: "raw", label: "葉 (raw)" },
+      { k: "leaf", s: "chopped", label: "葉 (chopped)" },
+      { k: "tomato", s: "raw", label: "トマト (raw)" },
+      { k: "tomato", s: "chopped", label: "トマト (chopped)" },
+      { k: "bread", s: "raw", label: "パン (raw)" },
+      { k: "meat", s: "raw", label: "肉 (raw)" },
+      { k: "meat", s: "chopped", label: "肉 (chopped)" },
+      { k: "meat", s: "cooked", label: "肉 (cooked)" },
+      { k: "meat", s: "burnt", label: "肉 (burnt)" },
+      { k: "noodle", s: "raw", label: "麺 (raw)" },
+      { k: "noodle", s: "cooked", label: "麺 (cooked)" },
+      { k: "noodle", s: "burnt", label: "麺 (burnt)" },
+    ];
+
+    const ingCols = 6;
+    const ingSize = 64;
+    ingredients.forEach((item, index) => {
+      const col = index % ingCols;
+      const row = Math.floor(index / ingCols);
+      const cx = 80 + col * 168;
+      const cy = 84 + row * 104;
+      drawIngredient(ctx, item.k, item.s, cx, cy, ingSize);
+      drawLabel(item.label, cx, cy + 48);
+    });
+
+    // 2. 全タイル
+    drawSectionTitle("2. タイル", 24, 290);
+
+    const tiles = [
+      { tile: { type: "floor" }, label: "床 (floor)" },
+      { tile: { type: "counter" }, label: "台 (counter)" },
+      { tile: { type: "board" }, label: "まな板 (board)" },
+      { tile: { type: "stove" }, label: "コンロ (stove)" },
+      { tile: { type: "box", box: "leaf" }, label: "木箱:葉 (box:leaf)" },
+      { tile: { type: "shelf" }, label: "皿棚 (shelf)" },
+      { tile: { type: "serve" }, label: "提供口 (serve)" },
+      { tile: { type: "trash" }, label: "ゴミ箱 (trash)" },
+    ];
+
+    const tileSize = 64;
+    tiles.forEach((entry, index) => {
+      const px = 48 + index * 126;
+      const py = 314;
+      drawTile(ctx, entry.tile, px, py, tileSize, 0.5);
+      drawLabel(entry.label, px + tileSize * 0.5, py + tileSize + 22);
+    });
+
+    // 3. プレイヤー4人分
+    drawSectionTitle("3. プレイヤー（4スロット・向き違い）", 24, 456);
+
+    const players = [
+      { slot: 0, fx: 0, fy: 1, isSelf: true, label: "P1 丸帽・下向き (自機)" },
+      { slot: 1, fx: 1, fy: 0, isSelf: false, label: "P2 四角帽・右向き" },
+      { slot: 2, fx: 0, fy: -1, isSelf: false, label: "P3 三角ずきん・上向き" },
+      { slot: 3, fx: -1, fy: 0.4, isSelf: false, label: "P4 とんがり帽・左下向き" },
+    ];
+
+    players.forEach((p, index) => {
+      const cx = 130 + index * 250;
+      const cy = 532;
+      drawPlayer(ctx, p.slot, cx, cy, p.fx, p.fy, 64, p.isSelf);
+      drawLabel(p.label, cx, cy + 54);
+    });
+  </script>
+</body>
+</html>
