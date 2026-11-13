@@ -1,9 +1,11 @@
-import { DEFAULT_NAME } from "./config.js";
 import { T } from "./data/text.js";
 import { STAGES } from "./data/stages.js";
 import { parseStage } from "./sim/world.js";
 import { targetTile } from "./sim/movement.js";
 import { createHostSession } from "./game/hostSession.js";
+import { createClientSession } from "./game/clientSession.js";
+import { normalizeCode, isValidCode } from "./net/roomcode.js";
+import { createScreens } from "./ui/screens.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createRenderer } from "./render/renderer.js";
@@ -13,30 +15,78 @@ const options = {
   room: params.get("room"),
   solo: params.get("solo") === "1",
   debug: params.get("debug") === "1",
-  lag: params.get("lag"),
-  seed: params.get("seed"),
+  lag: Math.max(0, Number(params.get("lag")) || 0),
+  seed: params.has("seed") && Number.isFinite(Number(params.get("seed")))
+    ? Number(params.get("seed"))
+    : undefined,
 };
-let name = DEFAULT_NAME;
+let name = "コック";
 try {
-  name = localStorage.getItem("harapeko.name") || DEFAULT_NAME;
+  name = localStorage.getItem("harapeko.name") || name;
 } catch {
-  // 保存領域を使えないブラウザーでは既定名で開始する。
+  // 保存できない環境でも遊べるようにする。
 }
+
 const canvas = document.querySelector("#game");
-const screens = document.querySelector("#screens");
+const root = document.querySelector("#screens");
 const overlay = document.querySelector("#overlay");
 const renderer = createRenderer(canvas);
 const input = createInput(window);
 const audio = createAudio();
 const stage = STAGES.kado;
 const { tiles } = parseStage(stage);
+let screen = "title";
+let current = null;
 let latestView = null;
-let roster = new Map([[0, { name }]]);
-let session = null;
-let menuOpen = false;
-let resultOpen = false;
+let roster = [];
+let code = null;
+let overlayOpen = false;
+const screens = createScreens(root, {
+  onCreate(value) {
+    createHost(value, false);
+  },
+  onJoin: join,
+  onReady(ready) {
+    if (current?.kind === "client") {
+      current.session?.setReady(ready);
+    }
+  },
+  onStart() {
+    if (current?.kind === "host" && current.session) {
+      current.session.start(options.seed);
+      showGame();
+    }
+  },
+  onAgain() {
+    if (current?.kind === "host" && current.session) {
+      current.session.again();
+      showGame();
+    }
+  },
+  onToLobby() {
+    if (current?.kind === "host" && current.session) {
+      current.session.toLobby();
+      showLobby();
+    }
+  },
+  onLeave: toTitle,
+  onSoloOffline(value) {
+    createHost(value, true);
+  },
+  onHowto() {
+    const node = panel(T.howto);
+    const list = document.createElement("ul");
+    for (const text of T.howtoBody) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.append(item);
+    }
+    node.append(list, button(T.back, closeOverlay));
+    showOverlay(node);
+  },
+});
 
-/** 初回操作でブラウザーの音声制限を解除する。 */
+/** 初回操作で音声制限を解除する。 */
 function unlockAudio() {
   audio.resume();
   window.removeEventListener("keydown", unlockAudio);
@@ -46,13 +96,20 @@ window.addEventListener("keydown", unlockAudio);
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("resize", renderer.resize);
 
-/** 現在の表示から自分が向いているマスを求める。 */
-function currentTarget() {
-  const player = latestView?.players.find((entry) => entry.slot === 0);
-  return player ? targetTile({ x: player.x, y: player.y, fx: player.fx, fy: player.fy }, tiles) : null;
+/** 名前の保存が禁止されていても開始を妨げない。 */
+function saveName(value) {
+  name = value || "コック";
+  try {
+    localStorage.setItem("harapeko.name", name);
+  } catch {
+    // 今回のセッションではメモリー上の名前を使う。
+  }
 }
 
-/** パネル用のボタンを作成する。 */
+function syncInput() {
+  input.setEnabled(screen === "game" && !overlayOpen);
+}
+
 function button(label, callback) {
   const node = document.createElement("button");
   node.type = "button";
@@ -61,7 +118,6 @@ function button(label, callback) {
   return node;
 }
 
-/** 見出し付きの簡易パネルを作成する。 */
 function panel(title) {
   const node = document.createElement("section");
   node.className = "panel";
@@ -71,52 +127,217 @@ function panel(title) {
   return node;
 }
 
-/** 結果やメニューが表示されている間は操作を止める。 */
-function syncInput() {
-  input.setEnabled(Boolean(session) && !menuOpen && !resultOpen);
-}
-
-/** 結果パネルと操作ロックを解除する。 */
-function clearResult() {
-  resultOpen = false;
-  screens.replaceChildren();
+function showOverlay(node) {
+  overlayOpen = true;
+  overlay.replaceChildren(node);
   syncInput();
 }
 
-/** 合計得点、星、全体成績を安全なテキストとして表示する。 */
-function onResult(result) {
-  resultOpen = true;
+function closeOverlay() {
+  overlayOpen = false;
+  overlay.replaceChildren();
   syncInput();
-  const node = panel(T.resultTitle);
-  const score = document.createElement("p");
-  score.textContent = `${T.totalCoins}: ${result.score}`;
-  const stars = document.createElement("p");
-  stars.textContent = "★".repeat(Math.max(0, Math.min(3, result.stars)));
-  node.append(score, stars);
-  for (const [label, key] of [
-    [T.servedCount, "served"],
-    [T.expiredCount, "expired"],
-    [T.tipsTotal, "tips"],
-    [T.burntCount, "burnt"],
-  ]) {
-    const line = document.createElement("p");
-    line.textContent = `${label}: ${result[key] ?? 0}`;
-    node.append(line);
+}
+
+/** 先に参照を外し、退室中や旧接続からの通知を無視する。 */
+function clearSession() {
+  const previous = current;
+  current = null;
+  previous?.session?.leave();
+  latestView = null;
+  roster = [];
+  code = null;
+  closeOverlay();
+}
+
+function toTitle(error) {
+  clearSession();
+  screen = "title";
+  screens.show("title", { name, error });
+  syncInput();
+}
+
+function selfSlot() {
+  return current?.kind === "host" ? 0 : current?.session?.slot ?? null;
+}
+
+function lobbyData() {
+  return {
+    code,
+    roster,
+    isHost: current?.kind === "host",
+    selfSlot: selfSlot(),
+  };
+}
+
+function showLobby() {
+  const updating = screen === "lobby";
+  screen = "lobby";
+  closeOverlay();
+  if (updating) {
+    screens.update("lobby", lobbyData());
+  } else {
+    screens.show("lobby", lobbyData());
   }
-  node.append(
-    button(T.again, () => {
-      clearResult();
-      session.again();
-    }),
-    button(T.toLobby, () => {
-      session.toLobby();
-      clearResult();
-    }),
-  );
-  screens.replaceChildren(node);
+  syncInput();
 }
 
-/** シミュレーションイベントを効果音へ対応付ける。 */
+function showGame() {
+  screen = "game";
+  screens.show("none");
+  closeOverlay();
+}
+
+/** ロビーの古い表示をゲーム再開と誤認しないように破棄する。 */
+function receiveView(view) {
+  if (!view) {
+    return;
+  }
+  latestView = view;
+  if ((view.phase === "countdown" || view.phase === "playing")
+      && screen !== "game" && screen !== "result") {
+    showGame();
+  }
+}
+
+/** セッション生成中の同期通知にも対応し、旧セッションを隔離する。 */
+function callbacks(record) {
+  return {
+    onView(view) {
+      if (current === record) {
+        receiveView(view);
+      }
+    },
+    onRoster(players, phase) {
+      if (current !== record) {
+        return;
+      }
+      roster = players;
+      if (phase === "lobby") {
+        latestView = null;
+        showLobby();
+      } else if (screen === "lobby") {
+        screens.update("lobby", lobbyData());
+      }
+    },
+    onResult(result) {
+      if (current !== record) {
+        return;
+      }
+      screen = "result";
+      closeOverlay();
+      screens.show("result", { ...result, isHost: record.kind === "host" });
+    },
+    onEvents(events) {
+      if (current === record) {
+        onEvents(events);
+      }
+    },
+  };
+}
+
+/** ルーム作成失敗時はタイトル上でオフライン開始も選べるようにする。 */
+function showRoomFailed() {
+  toTitle(T.roomFailed);
+  const node = panel(T.roomFailed);
+  node.append(
+    button(T.soloOffline, () => {
+      closeOverlay();
+      createHost(name, true);
+    }),
+    button(T.toTitle, () => toTitle()),
+  );
+  showOverlay(node);
+}
+
+function createHost(value, offline) {
+  clearSession();
+  saveName(value);
+  const record = { kind: "host", session: null };
+  current = record;
+  try {
+    record.session = createHostSession({
+      name,
+      stageId: "kado",
+      offline,
+      ...callbacks(record),
+      onCode(value) {
+        if (current === record) {
+          code = value;
+          if (screen === "lobby") {
+            screens.update("lobby", lobbyData());
+          }
+        }
+      },
+      onError() {
+        if (current === record) {
+          showRoomFailed();
+        }
+      },
+    });
+    if (current !== record) {
+      record.session.leave();
+      return;
+    }
+    if (offline) {
+      record.session.start(options.seed);
+      showGame();
+    }
+  } catch {
+    if (current === record) {
+      showRoomFailed();
+    }
+  }
+}
+
+function join(value, rawCode) {
+  const normalized = normalizeCode(rawCode);
+  if (!isValidCode(normalized)) {
+    screen = "join";
+    closeOverlay();
+    screens.show("join", { name: value, error: T.errBadCode });
+    return;
+  }
+  clearSession();
+  saveName(value);
+  screen = "join";
+  code = normalized;
+  screens.show("none");
+  showOverlay(panel(T.connecting));
+  const record = { kind: "client", session: null };
+  current = record;
+  try {
+    record.session = createClientSession({
+      name,
+      code: normalized,
+      lag: options.lag,
+      ...callbacks(record),
+      onClosed(reason) {
+        if (current !== record) {
+          return;
+        }
+        const errors = {
+          full: T.errFull,
+          version: T.errVersion,
+          "not-found": T.errNotFound,
+          "host-left": T.hostClosed,
+          timeout: T.hostClosed,
+          closed: T.hostClosed,
+        };
+        toTitle(errors[reason] || T.errConnect);
+      },
+    });
+    if (current !== record) {
+      record.session.leave();
+    }
+  } catch {
+    if (current === record) {
+      toTitle(T.errConnect);
+    }
+  }
+}
+
+/** M1 と同じイベント名で効果音を再生する。 */
 function onEvents(events) {
   const sounds = {
     serve: "serve",
@@ -142,111 +363,100 @@ function onEvents(events) {
   }
 }
 
-/** エラーは既存文言を使って表示する。 */
-function onError(error) {
-  console.error(error);
-  screens.replaceChildren(panel(T.errConnect));
+/** ホストの操作対象は最新の自プレイヤーの向きから求める。 */
+function currentTarget() {
+  const player = latestView?.players.find((entry) => entry.slot === selfSlot());
+  return player ? targetTile({ x: player.x, y: player.y, fx: player.fx, fy: player.fy }, tiles) : null;
 }
 
-/** メニューだけを閉じ、ゲームの操作を再開する。 */
-function closeMenu() {
-  menuOpen = false;
-  overlay.replaceChildren();
-  syncInput();
-}
-input.onMenu(() => {
-  if (!session) {
-    return;
-  }
-  if (menuOpen) {
-    closeMenu();
-    return;
-  }
-  menuOpen = true;
-  syncInput();
-  const node = panel(T.menuTitle);
-  node.append(
-    button(T.resume, closeMenu),
-    button(T.quitToTitle, () => {
-      session.leave();
-      window.location.search = "";
-    }),
-  );
-  overlay.replaceChildren(node);
-});
 input.onAction((action) => {
-  if (!session) {
+  if (screen !== "game" || overlayOpen || !current?.session) {
     return;
   }
-  if (action.a === "grab") {
+  if (current.kind === "host" && action.a === "grab") {
     const target = currentTarget();
     if (target) {
-      session.action({ a: "grab", x: target.x, y: target.y });
+      current.session.action({ a: "grab", x: target.x, y: target.y });
     }
   } else {
-    session.action(action);
+    current.session.action(action);
   }
 });
-
-if (options.solo) {
-  session = createHostSession({
-    name,
-    stageId: "kado",
-    offline: true,
-    onView(view) { latestView = view; },
-    onRoster(value) {
-      roster = Array.isArray(value)
-        ? new Map(value.map((entry) => [entry.slot, entry]))
-        : value;
-    },
-    onResult,
-    onEvents,
-    onError,
-  });
-  session.start();
-  // ループ開始後にシード指定のワールドへ差し替える。
-  if (options.seed !== null && Number.isFinite(Number(options.seed)) && session.game?.start) {
-    session.game.start(Number(options.seed));
+input.onMenu(() => {
+  if (overlayOpen) {
+    closeOverlay();
+    return;
   }
+  if (screen !== "game") {
+    return;
+  }
+  const node = panel(T.menuTitle);
+  node.append(
+    button(T.resume, closeOverlay),
+    button(T.quitToTitle, () => toTitle()),
+  );
+  showOverlay(node);
+});
+
+if (options.room !== null) {
+  join(name, options.room);
+} else if (options.solo) {
+  createHost(name, true);
 } else {
-  const node = panel(T.title);
-  const message = document.createElement("p");
-  message.textContent = `${T.soloOffline} (?solo=1)`;
-  node.append(message);
-  screens.replaceChildren(node);
+  toTitle();
 }
 syncInput();
+renderer.resize();
 
 let previousTime = performance.now();
 let fps = 0;
-/** 毎フレーム入力を送り、最新表示を描画する。 */
+/** ロビーでもスナップを確認し、クライアントの開始を検出する。 */
 function frame(now) {
   const elapsed = now - previousTime;
   previousTime = now;
   if (elapsed > 0) {
     fps = fps * 0.9 + (1000 / elapsed) * 0.1;
   }
-  session?.input(input.state());
-  renderer.render(latestView, {
-    stage,
-    roster,
-    selfSlot: 0,
-    target: currentTarget(),
-    ping: null,
-    effects: null,
-    now,
-  });
-  if (options.debug) {
-    const ctx = canvas.getContext("2d");
-    ctx.save();
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, 150, 17);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "11px monospace";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(`fps ${Math.round(fps)} tick ${latestView?.tick ?? 0}`, 3, 3);
-    ctx.restore();
+  const record = current;
+  if (record?.kind === "client" && record.session) {
+    record.session.update(now, input.state());
+    if (current === record) {
+      receiveView(record.session.getView(now));
+    }
+  }
+  if ((screen === "game" || screen === "result") && record?.session && current === record) {
+    if (record.kind === "host") {
+      record.session.input(input.state());
+    }
+    if (current === record) {
+      const ping = record.kind === "client" ? record.session.getPing() : null;
+      renderer.render(latestView, {
+        stage,
+        roster: Object.fromEntries(roster.map((player) => [player.slot, { name: player.name }])),
+        selfSlot: selfSlot(),
+        target: record.kind === "host" ? currentTarget() : null,
+        ping,
+        effects: null,
+        now,
+      });
+      if (options.debug) {
+        const debug = record.kind === "client"
+          ? record.session.getDebug()
+          : record.session.debugInfo();
+        const error = record.kind === "client" ? ` err ${debug.lastErr.toFixed(3)}` : "";
+        const ctx = canvas.getContext("2d");
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, 480, 17);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "11px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(`fps ${Math.round(fps)} tick ${latestView?.tick ?? 0} ${T.ping(ping == null ? "-" : Math.round(ping))} snap ${debug.snapBytes}B${error}`, 3, 3);
+        ctx.restore();
+      }
+    }
   }
   requestAnimationFrame(frame);
 }

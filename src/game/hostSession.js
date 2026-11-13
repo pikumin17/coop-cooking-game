@@ -1,6 +1,9 @@
 import { createHostGame } from "./hostGame.js";
+import { PROTOCOL_VERSION } from "../config.js";
+import { createPeerHost } from "../net/peerHost.js";
+import { sanitizeName, validateFromClient } from "../net/protocol.js";
 
-/** オフラインのホストゲームと固定刻みループを結合する。 */
+/** ホストゲーム、任意の通信と固定刻みループを結合する。 */
 export function createHostSession({
   name,
   stageId = "kado",
@@ -10,11 +13,8 @@ export function createHostSession({
   onResult,
   onEvents,
   onError,
+  onCode,
 }) {
-  if (!offline) {
-    throw new Error("オンラインのホストセッションは未実装です。");
-  }
-
   const game = createHostGame(stageId);
   const dt = 1 / 60;
   let worker = null;
@@ -23,15 +23,101 @@ export function createHostSession({
   let accumulator = 0;
   let resultSent = false;
   let left = false;
+  let peerHost = null;
+  let tickCount = 0;
+  let snapBytes = 0;
+  const connections = new Map();
 
-  /** 現在の名簿とフェーズを通知する。 */
-  function notifyRoster() {
-    if (!left) {
-      onRoster?.(Array.from(game.roster, ([slot, entry]) => ({
+  /** 現在の名簿を通信と画面で共用する。 */
+  function lobbyMessage() {
+    return {
+      t: "lobby",
+      players: Array.from(game.roster, ([slot, entry]) => ({
         slot,
         ...entry,
         host: slot === 0,
-      })), game.phase);
+      })),
+      phase: game.phase,
+    };
+  }
+
+  /** 現在の名簿とフェーズを全員に通知する。 */
+  function notifyRoster() {
+    if (!left) {
+      const message = lobbyMessage();
+      peerHost?.broadcast(message);
+      onRoster?.(message.players, message.phase);
+    }
+  }
+
+  /** 検証した参加者メッセージを対応するスロットへ適用する。 */
+  function onMessage(connId, raw) {
+    if (left) {
+      return;
+    }
+    if (raw?.t === "hello" && raw.v !== PROTOCOL_VERSION) {
+      peerHost.send(connId, { t: "reject", reason: "version" });
+      peerHost.close(connId);
+      return;
+    }
+    const msg = validateFromClient(raw);
+    if (!msg) {
+      return;
+    }
+    if (msg.t === "hello") {
+      // 同じ接続からの再挨拶で参加枠を増やさない。
+      if (connections.has(connId)) {
+        return;
+      }
+      const slot = [1, 2, 3].find((candidate) => !game.roster.has(candidate));
+      if (game.roster.size >= 4 || slot === undefined) {
+        peerHost.send(connId, { t: "reject", reason: "full" });
+        peerHost.close(connId);
+        return;
+      }
+      game.addPlayer(slot, sanitizeName(msg.name));
+      connections.set(connId, slot);
+      peerHost.send(connId, { t: "welcome", slot, stage: stageId });
+      const snap = game.snap();
+      if (snap) {
+        peerHost.send(connId, snap);
+      }
+      peerHost.send(connId, lobbyMessage());
+      notifyRoster();
+      if (game.phase === "result") {
+        peerHost.send(connId, game.result());
+      }
+      return;
+    }
+    if (msg.t === "ping") {
+      peerHost.send(connId, { t: "pong", t0: msg.t0 });
+      return;
+    }
+    const slot = connections.get(connId);
+    if (slot === undefined) {
+      return;
+    }
+    switch (msg.t) {
+      case "ready":
+        game.setReady(slot, msg.ok);
+        notifyRoster();
+        break;
+      case "in":
+        game.setInput(slot, { mx: msg.mx, my: msg.my, chop: msg.chop, seq: msg.seq });
+        break;
+      case "act":
+        game.act(slot, msg);
+        break;
+    }
+  }
+
+  /** 切断した参加者を名簿とワールドから取り除く。 */
+  function onDisconnect(connId) {
+    const slot = connections.get(connId);
+    if (!left && slot !== undefined) {
+      game.removePlayer(slot);
+      connections.delete(connId);
+      notifyRoster();
     }
   }
 
@@ -62,7 +148,16 @@ export function createHostSession({
         ticks++;
         const events = game.tick(dt);
         if (events.length > 0) {
+          peerHost?.broadcast({ t: "ev", list: events });
           onEvents?.(events);
+        }
+        tickCount++;
+        if (!left && peerHost && tickCount % 3 === 0) {
+          const snap = game.snap();
+          if (snap) {
+            snapBytes = new TextEncoder().encode(JSON.stringify(snap)).length;
+            peerHost.broadcast(snap);
+          }
         }
       }
       // 計画書2.4: 3刻みごとの配信に限らず、更新後は毎通知で描画する。
@@ -71,7 +166,9 @@ export function createHostSession({
       }
       if (!left && game.phase === "result" && !resultSent) {
         resultSent = true;
-        onResult?.(game.result());
+        const result = game.result();
+        peerHost?.broadcast(result);
+        onResult?.(result);
       }
     } catch (error) {
       stopLoop();
@@ -105,11 +202,13 @@ export function createHostSession({
   }
 
   /** 新しいシードで開始し、結果通知と時間の蓄積を初期化する。 */
-  function start() {
+  function start(seed = (Math.random() * 2147483647) | 0) {
     if (left) {
       return;
     }
-    game.start((Math.random() * 2147483647) | 0);
+    game.start(seed);
+    peerHost?.broadcast({ t: "start", stage: stageId, seed });
+    tickCount = 0;
     resultSent = false;
     accumulator = 0;
     lastTime = performance.now();
@@ -120,7 +219,7 @@ export function createHostSession({
   game.setReady(0, true);
   notifyRoster();
 
-  return {
+  const session = {
     code: null,
     start,
     /** 結果画面から新しいゲームを始める。 */
@@ -138,8 +237,17 @@ export function createHostSession({
     },
     /** 退室後はループとすべての通知を停止する。 */
     leave() {
+      if (left) {
+        return;
+      }
       left = true;
       stopLoop();
+      try {
+        peerHost?.broadcast({ t: "bye" });
+      } finally {
+        peerHost?.close();
+        connections.clear();
+      }
     },
     /** 自分の連続入力をゲームへ渡す。 */
     input(state) {
@@ -153,6 +261,30 @@ export function createHostSession({
         game.act(0, a);
       }
     },
+    /** 直近に配信したスナップの通信量を返す。 */
+    debugInfo() {
+      return { snapBytes, };
+    },
     game,
   };
+
+  if (!offline) {
+    try {
+      peerHost = createPeerHost({ onMessage, onDisconnect });
+      Promise.resolve(peerHost.open()).then((code) => {
+        if (!left) {
+          session.code = code;
+          onCode?.(code);
+        }
+      }).catch((error) => {
+        if (!left) {
+          onError?.(error);
+        }
+      });
+    } catch (error) {
+      onError?.(error);
+    }
+  }
+
+  return session;
 }
