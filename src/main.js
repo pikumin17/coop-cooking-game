@@ -1,3 +1,4 @@
+import { DEFAULT_NAME } from "./config.js";
 import { T } from "./data/text.js";
 import { STAGES } from "./data/stages.js";
 import { parseStage } from "./sim/world.js";
@@ -9,6 +10,8 @@ import { createScreens } from "./ui/screens.js";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createRenderer } from "./render/renderer.js";
+import { createEffects } from "./render/effects.js";
+import { showHowto, showMenu, showDialog } from "./ui/overlays.js";
 
 const params = new URLSearchParams(window.location.search);
 const options = {
@@ -20,7 +23,7 @@ const options = {
     ? Number(params.get("seed"))
     : undefined,
 };
-let name = "コック";
+let name = DEFAULT_NAME;
 try {
   name = localStorage.getItem("harapeko.name") || name;
 } catch {
@@ -33,6 +36,7 @@ const overlay = document.querySelector("#overlay");
 const renderer = createRenderer(canvas);
 const input = createInput(window);
 const audio = createAudio();
+const effects = createEffects();
 const stage = STAGES.kado;
 const { tiles } = parseStage(stage);
 let screen = "title";
@@ -41,6 +45,8 @@ let latestView = null;
 let roster = [];
 let code = null;
 let overlayOpen = false;
+// オーバーレイ自身が閉じた場合も入力状態を同期する。
+new MutationObserver(syncInput).observe(overlay, { childList: true });
 const screens = createScreens(root, {
   onCreate(value) {
     createHost(value, false);
@@ -74,15 +80,8 @@ const screens = createScreens(root, {
     createHost(value, true);
   },
   onHowto() {
-    const node = panel(T.howto);
-    const list = document.createElement("ul");
-    for (const text of T.howtoBody) {
-      const item = document.createElement("li");
-      item.textContent = text;
-      list.append(item);
-    }
-    node.append(list, button(T.back, closeOverlay));
-    showOverlay(node);
+    showHowto(overlay);
+    syncInput();
   },
 });
 
@@ -98,7 +97,7 @@ window.addEventListener("resize", renderer.resize);
 
 /** 名前の保存が禁止されていても開始を妨げない。 */
 function saveName(value) {
-  name = value || "コック";
+  name = value || DEFAULT_NAME;
   try {
     localStorage.setItem("harapeko.name", name);
   } catch {
@@ -106,16 +105,10 @@ function saveName(value) {
   }
 }
 
+/** パネルの開閉に合わせてゲーム入力を切り替える。 */
 function syncInput() {
+  overlayOpen = overlay.hasChildNodes();
   input.setEnabled(screen === "game" && !overlayOpen);
-}
-
-function button(label, callback) {
-  const node = document.createElement("button");
-  node.type = "button";
-  node.textContent = label;
-  node.addEventListener("click", callback);
-  return node;
 }
 
 function panel(title) {
@@ -239,15 +232,20 @@ function callbacks(record) {
 /** ルーム作成失敗時はタイトル上でオフライン開始も選べるようにする。 */
 function showRoomFailed() {
   toTitle(T.roomFailed);
-  const node = panel(T.roomFailed);
-  node.append(
-    button(T.soloOffline, () => {
-      closeOverlay();
-      createHost(name, true);
-    }),
-    button(T.toTitle, () => toTitle()),
-  );
-  showOverlay(node);
+  showDialog(overlay, {
+    message: T.roomFailed,
+    buttons: [
+      {
+        label: T.soloOffline,
+        onClick: () => {
+          closeOverlay();
+          createHost(name, true);
+        },
+      },
+      { label: T.toTitle, onClick: () => toTitle() },
+    ],
+  });
+  syncInput();
 }
 
 function createHost(value, offline) {
@@ -354,6 +352,7 @@ function onEvents(events) {
     trash: "place",
   };
   for (const event of events) {
+    effects.push(event, latestView);
     const sound = event.e === "phase"
       ? ({ playing: "start", result: "end" })[event.phase]
       : sounds[event.e];
@@ -390,12 +389,11 @@ input.onMenu(() => {
   if (screen !== "game") {
     return;
   }
-  const node = panel(T.menuTitle);
-  node.append(
-    button(T.resume, closeOverlay),
-    button(T.quitToTitle, () => toTitle()),
-  );
-  showOverlay(node);
+  showMenu(overlay, {
+    onResume() {},
+    onLeave: () => toTitle(),
+  });
+  syncInput();
 });
 
 if (options.room !== null) {
@@ -414,6 +412,7 @@ let fps = 0;
 function frame(now) {
   const elapsed = now - previousTime;
   previousTime = now;
+  effects.update(elapsed / 1000);
   if (elapsed > 0) {
     fps = fps * 0.9 + (1000 / elapsed) * 0.1;
   }
@@ -436,7 +435,7 @@ function frame(now) {
         selfSlot: selfSlot(),
         target: record.kind === "host" ? currentTarget() : null,
         ping,
-        effects: null,
+        effects,
         now,
       });
       if (options.debug) {
