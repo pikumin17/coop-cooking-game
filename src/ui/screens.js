@@ -1,4 +1,4 @@
-import { T } from "../data/text.js";
+import { T } from "../data/text.js?v=20261114b";
 
 /** DOM を安全に組み立て、画面ごとの操作を通知する。 */
 export function createScreens(rootEl, handlers) {

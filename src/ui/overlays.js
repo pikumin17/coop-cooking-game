@@ -1,4 +1,4 @@
-import { T } from "../data/text.js";
+import { T } from "../data/text.js?v=20261114b";
 
 /** パネルを表示し、自分のパネルだけを閉じる関数を返す。 */
 function mount(overlayEl, panel) {
