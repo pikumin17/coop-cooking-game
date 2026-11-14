@@ -128,9 +128,10 @@ body {
 /* ---------- タイトルロゴ ---------- */
 
 .logo {
-  font-size: clamp(30px, 8.5vw, 46px);
+  font-size: clamp(24px, 7.2vw, 40px);
   color: var(--tomato);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   text-shadow:
     2px 0 0 #FFF6E0, -2px 0 0 #FFF6E0, 0 2px 0 #FFF6E0, 0 -2px 0 #FFF6E0,
     3px 3px 0 var(--gold), 6px 6px 0 rgb(59 47 47 / 28%);
@@ -415,5 +416,31 @@ body {
   .btn-primary {
     min-height: 62px;
     font-size: 20px;
+  }
+}
+
+@media (max-height: 700px) {
+  .panel {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .tagline {
+    margin-bottom: 12px;
+  }
+
+  .btn {
+    min-height: 50px;
+    margin-top: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .btn-primary {
+    min-height: 56px;
+  }
+
+  .field {
+    min-height: 50px;
   }
 }
