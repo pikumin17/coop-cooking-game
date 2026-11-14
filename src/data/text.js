@@ -2,6 +2,7 @@
 export const T = {
   // タイトル・共通ボタン
   title: "はらぺこ横丁キッチン",
+  tagline: "2〜4人で わいわい協力クッキング！",
   nameLabel: "名前",
   namePlaceholder: "名前（8文字まで）",
   createRoom: "ルームを作る",
