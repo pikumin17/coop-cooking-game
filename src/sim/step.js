@@ -9,10 +9,23 @@ import { updateOrders } from "./orders.js";
  * @param {number} dt 経過秒
  * @returns {object[]} 今回までに蓄積されたイベント
  */
+/** スタンプの残り表示時間を減らし、切れたら消す。 */
+function decayEmote(player, dt) {
+  player.emoteT -= dt;
+  if (player.emoteT <= 0) {
+    player.emote = 0;
+    player.emoteT = 0;
+  }
+}
+
 export function step(state, stage, dt) {
   if (state.phase === "countdown") {
     // 計画書B12: 開始フレームはカウントダウン処理だけを行う。
     state.countdown -= dt;
+    // スタンプの表示時間はフェーズによらず設定どおりに減らす。
+    for (const player of Object.values(state.players)) {
+      decayEmote(player, dt);
+    }
     if (state.countdown <= 0) {
       state.phase = "playing";
       state.nextSpawnAt = stage.firstOrderDelay;
@@ -23,11 +36,7 @@ export function step(state, stage, dt) {
     const players = Object.values(state.players);
     for (const player of players) {
       stepMovement(player, player.input, dt, state.tiles);
-      player.emoteT -= dt;
-      if (player.emoteT <= 0) {
-        player.emote = 0;
-        player.emoteT = 0;
-      }
+      decayEmote(player, dt);
     }
 
     // 計画書B5・B13: 協力人数によらず、まな板一枚につき等速で切る。

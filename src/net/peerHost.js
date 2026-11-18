@@ -130,7 +130,11 @@ export function createPeerHost({ onConnect, onMessage, onDisconnect }) {
    * @param {*} msg - 送信するメッセージ。
    */
   function send(connId, msg) {
-    connections.get(connId)?.send(msg);
+    const conn = connections.get(connId);
+    // PeerJS 1.5.4 は open 前の send で error イベントを発火させ、接続が切断扱いになる。開いた接続にだけ送る。
+    if (conn?.open) {
+      conn.send(msg);
+    }
   }
 
   /**
@@ -139,7 +143,9 @@ export function createPeerHost({ onConnect, onMessage, onDisconnect }) {
    */
   function broadcast(msg) {
     for (const conn of connections.values()) {
-      conn.send(msg);
+      if (conn.open) {
+        conn.send(msg);
+      }
     }
   }
 

@@ -25,6 +25,7 @@ export function createHostSession({
   let left = false;
   let peerHost = null;
   let tickCount = 0;
+  let tickFailures = 0;
   let snapBytes = 0;
   const connections = new Map();
 
@@ -146,7 +147,18 @@ export function createHostSession({
       while (!left && accumulator >= dt && ticks < 15) {
         accumulator -= dt;
         ticks++;
-        const events = game.tick(dt);
+        let events;
+        try {
+          events = game.tick(dt);
+          tickFailures = 0;
+        } catch (error) {
+          tickFailures++;
+          // 1回だけの失敗では部屋を解体せず、その刻みを飛ばして継続する。連続失敗時だけ従来どおり異常終了する。
+          if (tickFailures >= 3) {
+            throw error;
+          }
+          break;
+        }
         if (events.length > 0) {
           peerHost?.broadcast({ t: "ev", list: events });
           onEvents?.(events);

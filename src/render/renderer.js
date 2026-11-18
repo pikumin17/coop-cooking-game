@@ -5,14 +5,17 @@ import { INGREDIENTS } from "../data/ingredients.js";
 import { PALETTE, drawTile, drawItem, drawPlayer } from "./shapes.js";
 import { drawTopHud, drawBottomHud } from "./hud.js";
 
-/** レシピと皿の内容を順序によらず照合する。 */
-function isComplete(item) {
+/** ステージ対象レシピと皿の内容を順序によらず照合する。 */
+function isComplete(item, stage) {
   if (!item?.plate) {
     return false;
   }
   const contents = item.c.map(({ k, s }) => `${k}:${s}`).sort().join("|");
-  return Object.values(RECIPES).some((recipe) => recipe.needs.length === item.c.length
-    && recipe.needs.map(({ item: k, state: s }) => `${k}:${s}`).sort().join("|") === contents);
+  return stage.recipes.some((key) => {
+    const recipe = RECIPES[key];
+    return recipe && recipe.needs.length === item.c.length
+      && recipe.needs.map(({ item: k, state: s }) => `${k}:${s}`).sort().join("|") === contents;
+  });
 }
 
 /** キャンバスに論理座標のゲーム画面を描画する。 */
@@ -63,7 +66,7 @@ export function createRenderer(canvas) {
     }));
     for (const [key, item] of view.items) {
       const [x, y] = key.split(",").map(Number);
-      drawItem(ctx, item, x * 64 + 32, 72 + y * 64 + 32, 44, isComplete(item));
+      drawItem(ctx, item, x * 64 + 32, 72 + y * 64 + 32, 44, isComplete(item, stage));
     }
     for (const [key, item] of view.items) {
       if (item.plate) {
@@ -96,7 +99,7 @@ export function createRenderer(canvas) {
       const cy = 72 + player.y * 64;
       drawPlayer(ctx, player.slot, cx, cy, player.fx, player.fy, 48, player.slot === selfSlot);
       if (player.held) {
-        drawItem(ctx, player.held, cx + player.fx * 18, cy + player.fy * 18 - 5, 28, isComplete(player.held));
+        drawItem(ctx, player.held, cx + player.fx * 18, cy + player.fy * 18 - 5, 28, isComplete(player.held, stage));
       }
       const entry = roster instanceof Map ? roster.get(player.slot) : roster?.[player.slot];
       ctx.textAlign = "center";
@@ -124,7 +127,7 @@ export function createRenderer(canvas) {
       ctx.strokeRect(target.x * 64 + 2, 72 + target.y * 64 + 2, 60, 60);
     }
     drawTopHud(ctx, view, stage);
-    drawBottomHud(ctx, view, stage, view.players.length, ping);
+    drawBottomHud(ctx, view, stage, view.playerCount ?? view.players.length, ping);
     effects?.draw(ctx);
     if (view.phase === "countdown") {
       ctx.textAlign = "center";

@@ -129,7 +129,13 @@ export function createClientSession({
         if (!predictor || !interp) {
           break;
         }
-        const view = decodeSnap(msg);
+        let view;
+        try {
+          view = decodeSnap(msg);
+        } catch {
+          // 検証をすり抜けた不正な形状の snap は、その1通だけを捨てて受信を継続する。
+          break;
+        }
         interp.push(view, performance.now());
         const entry = view.players.find((player) => player.slot === slot);
         if (entry) {

@@ -175,6 +175,7 @@ export function validateFromClient(msg) {
  * - { t: "lobby", players: "none", phase: "wait" }（players が配列でない）
  * - { t: "start", stage: "s1", seed: "abc" }（seed が有限数でない）
  * - { t: "snap", k: NaN }（k が有限数でない）
+ * - { t: "snap", k: 5 }（pl / it / od が配列でない）
  * - { t: "ev", list: null }（list が配列でない）
  * - { t: "pong", t0: "123" }（t0 が有限数でない）
  * - { t: "unknown" }（未知のメッセージ種別 t）
@@ -217,7 +218,8 @@ export function validateFromHost(msg) {
     }
 
     case "snap": {
-      if (!isFiniteNumber(msg.k)) {
+      if (!isFiniteNumber(msg.k)
+        || !Array.isArray(msg.pl) || !Array.isArray(msg.it) || !Array.isArray(msg.od)) {
         return null;
       }
       return msg;

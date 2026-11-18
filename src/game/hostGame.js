@@ -56,6 +56,10 @@ export function createHostGame(stageId) {
         return;
       }
       if (a.a === "grab") {
+        // 取る・置く・提供はプレイ中だけ受け付ける（カウントダウン中の先取りと結果確定後の提供を防ぐ）。
+        if (world.phase !== "playing") {
+          return;
+        }
         const { x, y } = a;
         if (!Number.isInteger(x) || !Number.isInteger(y)) {
           return;
@@ -93,11 +97,11 @@ export function createHostGame(stageId) {
     result() {
       return world ? buildResult(world, stage, roster) : null;
     },
-    /** ワールドを破棄して全員の準備状態を解除する。 */
+    /** ワールドを破棄し、参加者の準備状態を解除する（ホストはセッション生成時と同じく準備済みのまま）。 */
     backToLobby() {
       world = null;
-      for (const entry of roster.values()) {
-        entry.ready = false;
+      for (const [slot, entry] of roster) {
+        entry.ready = slot === 0;
       }
     },
   };

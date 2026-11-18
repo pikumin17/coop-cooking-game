@@ -37,6 +37,7 @@ export function encodeSnap(state) {
     cd: round(state.countdown, 2),
     tl: round(state.timeLeft, 2),
     sc: state.score,
+    pc: state.playerCount,
     pl: Object.values(state.players)
       .sort((a, b) => a.slot - b.slot)
       .map((player) => [
@@ -72,6 +73,7 @@ export function decodeSnap(msg) {
     countdown: msg.cd,
     timeLeft: msg.tl,
     score: msg.sc,
+    playerCount: msg.pc,
     players: msg.pl.map(([slot, x, y, fx, fy, held, dash01, emote, ack]) => ({
       slot,
       x,

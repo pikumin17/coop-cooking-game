@@ -694,7 +694,7 @@ export function drawPlate(ctx, contents, cx, cy, size, complete = false) {
 /**
  * 手持ちまたは台上のアイテム（お皿または単体食材）を描画する。
  * @param {CanvasRenderingContext2D} ctx - 描画コンテキスト
- * @param {{ plate?: boolean, contents?: Array<{ k: string, s: string }>, k?: string, s?: string } | null | undefined} item - アイテム情報
+ * @param {{ plate?: boolean, c?: Array<{ k: string, s: string }>, k?: string, s?: string } | null | undefined} item - アイテム情報
  * @param {number} cx - 中心X座標（ピクセル）
  * @param {number} cy - 中心Y座標（ピクセル）
  * @param {number} size - 描画目安サイズ（ピクセル）
@@ -705,7 +705,7 @@ export function drawItem(ctx, item, cx, cy, size, complete = false) {
     return;
   }
   if (item.plate) {
-    drawPlate(ctx, item.contents ?? [], cx, cy, size, complete);
+    drawPlate(ctx, item.c ?? [], cx, cy, size, complete);
     return;
   }
   if (item.k) {
@@ -889,5 +889,5 @@ export function drawRecipeIcon(ctx, recipeKey, cx, cy, size) {
   if (!recipe) {
     return;
   }
-  drawPlate(ctx, recipe.needs, cx, cy, size, false);
+  drawPlate(ctx, recipe.needs.map(({ item, state }) => ({ k: item, s: state })), cx, cy, size, false);
 }

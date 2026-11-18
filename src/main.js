@@ -1,17 +1,17 @@
 import { DEFAULT_NAME } from "./config.js";
-import { T } from "./data/text.js?v=20261114c";
+import { T } from "./data/text.js?v=20261118a";
 import { STAGES } from "./data/stages.js";
 import { parseStage } from "./sim/world.js";
 import { targetTile } from "./sim/movement.js";
 import { createHostSession } from "./game/hostSession.js";
 import { createClientSession } from "./game/clientSession.js";
 import { normalizeCode, isValidCode } from "./net/roomcode.js";
-import { createScreens } from "./ui/screens.js?v=20261114c";
+import { createScreens } from "./ui/screens.js?v=20261118a";
 import { createAudio } from "./audio.js";
 import { createInput } from "./input.js";
 import { createRenderer } from "./render/renderer.js";
 import { createEffects } from "./render/effects.js";
-import { showHowto, showMenu, showDialog } from "./ui/overlays.js?v=20261114c";
+import { showHowto, showMenu, showDialog } from "./ui/overlays.js?v=20261118a";
 
 const params = new URLSearchParams(window.location.search);
 const options = {
